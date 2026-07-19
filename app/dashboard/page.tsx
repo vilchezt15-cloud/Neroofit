@@ -96,9 +96,10 @@ export default function Dashboard() {
       setEventModalStep('type_selection');
       setEventForm({
         date: '', startTime: '', endTime: '',
-        clientName: '', clientPhone: '',
+        clientId: '', clientName: '', clientPhone: '',
         googleMeet: false, title: '', description: '',
-        eventType: 'Presencial', maxCapacity: '', cep: '', address: ''
+        eventType: 'Treino', recurrence: 'Nenhuma', reminder24h: false, reminder1h: false, notes: '',
+        maxCapacity: '', cep: '', address: ''
       });
     } catch (e) {
       console.error(e);
@@ -807,6 +808,7 @@ export default function Dashboard() {
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button className={styles.btnMass} onClick={async () => {
+                  const { data: { session } } = await supabase.auth.getSession();
                   const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', session?.user?.id).single();
                   if (profile) {
                     const newExp = {
