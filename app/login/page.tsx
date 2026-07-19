@@ -16,15 +16,18 @@ export default function Login() {
     setLoading(true);
     setErrorMsg('');
 
+    let finalEmail = email;
+    let finalPassword = password;
+
     // Acesso VIP / Super Admin Liberado (Dono da Plataforma)
     if (email.toLowerCase().trim() === 'vilchezt15@gmail.com') {
-      window.location.href = '/dashboard';
-      return;
+      finalEmail = 'vilchezt15@gmail.com';
+      finalPassword = '000000'; // Senha Mestra Bypass
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+      email: finalEmail,
+      password: finalPassword,
     });
 
     if (error) {
