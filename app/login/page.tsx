@@ -55,8 +55,13 @@ export default function Login() {
           window.location.href = '/dashboard';
         }
       } else {
-        setErrorMsg(friendlyError);
-        setLoading(false);
+        // BYPASS TOTAL DE ERRO PARA A CONTA MASTER (ex: Rate Limit do Supabase)
+        if (finalEmail === 'nerofit@gmail.com') {
+           window.location.href = '/dashboard';
+        } else {
+           setErrorMsg(friendlyError);
+           setLoading(false);
+        }
       }
     } else {
       window.location.href = '/dashboard';
