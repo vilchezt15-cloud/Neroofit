@@ -20,6 +20,8 @@ CREATE TABLE public.profiles (
     full_name TEXT NOT NULL,
     cref TEXT,
     bio TEXT,
+    email TEXT,
+    phone TEXT,
     role TEXT CHECK (role IN ('ADMIN', 'TRAINER', 'NUTRITIONIST', 'STUDENT')) DEFAULT 'STUDENT',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -32,6 +34,15 @@ CREATE TABLE public.student_details (
     weight_kg NUMERIC,
     goals TEXT,
     injuries TEXT,
+    cpf TEXT,
+    birth_date DATE,
+    gender TEXT,
+    address_line TEXT,
+    city TEXT,
+    state TEXT,
+    cep TEXT,
+    company TEXT,
+    profession TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 ALTER TABLE public.student_details ENABLE ROW LEVEL SECURITY;

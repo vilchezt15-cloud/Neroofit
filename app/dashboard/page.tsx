@@ -944,36 +944,68 @@ export default function Dashboard() {
               </select>
             </div>
 
-            <div className={styles.clientGrid}>
-              {students.map(stu => (
-                <div key={stu.id} className={styles.clientCard} onClick={() => router.push(`/dashboard/clientes/${stu.id}`)}>
-                  <div className={styles.clientCardTop}>
-                    <div className={styles.clientAvatar}>{(stu.full_name || 'A')[0].toUpperCase()}</div>
-                    <div>
-                      <h4>{stu.full_name}</h4>
-                      <span>Aluno(a) Ativo(a)</span>
-                    </div>
-                  </div>
-                  <div className={styles.clientCardStats}>
-                    <div className={styles.statBox}>
-                      <span>Próx. Treino</span>
-                      <strong>Hoje</strong>
-                    </div>
-                    <div className={styles.statBox}>
-                      <span>Mensalidade</span>
-                      <strong style={{ color: '#22c55e' }}>Em dia</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {students.length === 0 && (
-                <div className={styles.placeholderCard} style={{ gridColumn: '1 / -1', minHeight: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <div style={{ fontSize: '3rem', color: 'rgba(255,255,255,0.1)' }}>👥</div>
-                  <h3 style={{ marginTop: 15 }}>Nenhum Aluno Cadastrado</h3>
-                  <p>Adicione seu primeiro aluno para gerir treinos e finanças.</p>
-                </div>
-              )}
+            <div style={{ overflowX: 'auto', marginTop: '20px' }}>
+              <table className={styles.dataTable} style={{ width: '100%', minWidth: 1000 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: '30%' }}>Nome do Aluno</th>
+                    <th style={{ width: '15%' }}>Telefone</th>
+                    <th style={{ width: '15%' }}>Plano/Freq.</th>
+                    <th style={{ width: '10%', textAlign: 'center' }}>Mensalidade</th>
+                    <th style={{ width: '15%', textAlign: 'center' }}>Próx. Treino</th>
+                    <th style={{ width: '15%', textAlign: 'center' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {students.map(stu => {
+                    const isActive = stu.student_details?.[0]?.status === 'Ativo';
+                    const planName = stu.student_details?.[0]?.plan_name_cache || 'Sem plano';
+                    return (
+                    <tr key={stu.id} onClick={() => router.push(`/dashboard/clientes/${stu.id}`)} style={{ cursor: 'pointer', transition: 'background 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div className={styles.clientAvatar} style={{ width: 36, height: 36, fontSize: '0.95rem' }}>
+                            {(stu.full_name || 'A')[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <strong style={{ color: '#fff', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                              {stu.full_name}
+                              <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', background: isActive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: isActive ? '#4ade80' : '#ef4444' }}>
+                                {isActive ? 'ATIVO' : 'INATIVO'}
+                              </span>
+                            </strong>
+                            <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>{stu.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '0.85rem', color: '#e4e4e7', marginBottom: '2px' }}>{stu.phone || 'N/A'}</div>
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '0.85rem', color: '#e4e4e7', marginBottom: '2px' }}>{planName.includes('Plano') ? planName : `Plano ${planName}`}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Mensal</div>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                         <span style={{ background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)', padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>Em dia</span>
+                      </td>
+                      <td style={{ textAlign: 'center', color: '#fff', fontSize: '0.9rem' }}>Hoje</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button className={styles.btnSecondary} style={{ fontSize: '0.75rem', padding: '6px 12px' }}>Abrir Ficha</button>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                  {students.length === 0 && (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '60px 0' }}>
+                        <div style={{ fontSize: '3rem', color: 'rgba(255,255,255,0.1)', margin: '0 auto 15px' }}>👥</div>
+                        <h3 style={{ color: '#fff', marginBottom: 8 }}>Nenhum Aluno Cadastrado</h3>
+                        <p style={{ color: '#a1a1aa', fontSize: '0.9rem' }}>Adicione seu primeiro aluno para gerir treinos e finanças.</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         );
