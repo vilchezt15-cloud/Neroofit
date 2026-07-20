@@ -405,7 +405,7 @@ export default function Dashboard() {
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        // router.push('/login'); 
+        router.push('/login'); 
       } else {
         fetchDashboardData();
       }
