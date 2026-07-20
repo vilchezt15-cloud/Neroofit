@@ -11,6 +11,15 @@ export default function Dashboard() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tab = urlParams.get('tab');
+      if (tab) setActiveTab(tab);
+    }
+  }, []);
+
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalStep, setEventModalStep] = useState('type_selection'); // 'type_selection', 'consulta', 'evento'
@@ -29,6 +38,7 @@ export default function Dashboard() {
   const [students, setStudents] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [fitnessNews, setFitnessNews] = useState<any[]>([]);
 
   const [settingsForm, setSettingsForm] = useState({
     full_name: '', cref: '', bio: '',
@@ -38,12 +48,18 @@ export default function Dashboard() {
   const [selectedVideo, setSelectedVideo] = useState<{name: string, url: string} | null>(null);
 
   const [showStudentModal, setShowStudentModal] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [studentForm, setStudentForm] = useState({
-    fullName: '', email: '', phone: '', birthDate: '', cpf: '',
+    fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
+    address: '', city: '', state: '', cep: '', company: '', profession: '',
     planId: '', paymentMethod: 'PIX', billingFreq: 'MONTHLY', amount: '',
     startDate: '', nextDueDate: '',
-    goals: '', healthRestrictions: '', anamnesisNote: ''
+    goals: '', healthRestrictions: '', anamnesisNote: '',
+    status: 'Ativo', emergencyContactName: '', emergencyContactPhone: '',
+    emergencyContactRelation: '', monthlyFee: '', dueDay: '5'
   });
+  const [studentSearch, setStudentSearch] = useState('');
+  const [studentFilter, setStudentFilter] = useState('Todos');
 
   const [eventForm, setEventForm] = useState({
     date: '', startTime: '', endTime: '',
@@ -164,8 +180,12 @@ export default function Dashboard() {
       const { data: subData } = await supabase.from('subscriptions').select(`*, plans(name, price_cents, frequency), profiles(full_name)`).eq('status', 'ACTIVE');
       if (subData) setSubscriptions(subData);
 
-      // Fetch Students for Dropdown
-      const { data: stuData } = await supabase.from('profiles').select('id, full_name').eq('tenant_id', prof.tenant_id).eq('role', 'STUDENT');
+      // Fetch Students for Dropdown & CRM List
+      const { data: stuData } = await supabase.from('profiles')
+        .select('id, full_name, email, phone, created_at, student_details(status, plan_name_cache)')
+        .eq('tenant_id', prof.tenant_id)
+        .eq('role', 'STUDENT')
+        .order('created_at', { ascending: false });
       if (stuData) setStudents(stuData);
 
       // Fetch Agenda Events
@@ -297,6 +317,89 @@ export default function Dashboard() {
     }
   };
 
+  const handleSaveStudent = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Autenticação necessária.");
+      const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).single();
+      if (!prof) throw new Error("Perfil não encontrado.");
+
+      if (!studentForm.fullName) throw new Error("O Nome Completo é obrigatório.");
+
+      // Generates a local UUID for the profile (assuming foreign key to auth.users is dropped or pending drop)
+      const newProfileId = crypto.randomUUID();
+
+      const profilePayload = {
+        id: newProfileId,
+        tenant_id: prof.tenant_id,
+        full_name: studentForm.fullName,
+        email: studentForm.email,
+        phone: studentForm.phone,
+        role: 'STUDENT'
+      };
+
+      const { error: profileErr } = await supabase.from('profiles').insert(profilePayload);
+      if (profileErr) throw profileErr; // Assumimos que o usuário executou o SQL de drop constraint, cortando a trava do supabase.
+
+      let selectedPlanName = '';
+      if (studentForm.planId) {
+         const foundPlan = plans.find(p => p.id === studentForm.planId);
+         if (foundPlan) selectedPlanName = foundPlan.name;
+      }
+
+      const detailsPayload = {
+        profile_id: newProfileId,
+        status: studentForm.status,
+        goals: studentForm.goals,
+        injuries: studentForm.healthRestrictions,
+        notes: studentForm.anamnesisNote,
+        cpf: studentForm.cpf,
+        birth_date: studentForm.birthDate ? studentForm.birthDate : null,
+        gender: studentForm.gender,
+        address_line: studentForm.address,
+        city: studentForm.city,
+        state: studentForm.state,
+        cep: studentForm.cep,
+        company: studentForm.company,
+        profession: studentForm.profession,
+        emergency_contact_name: studentForm.emergencyContactName,
+        emergency_contact_phone: studentForm.emergencyContactPhone,
+        emergency_contact_relation: studentForm.emergencyContactRelation,
+        monthly_fee: studentForm.monthlyFee ? parseFloat(studentForm.monthlyFee.replace(',', '.')) : null,
+        due_day: studentForm.dueDay ? parseInt(studentForm.dueDay) : null,
+        plan_name_cache: selectedPlanName || 'Sem plano'
+      };
+
+      await supabase.from('student_details').insert(detailsPayload);
+
+      if (studentForm.planId) {
+        await supabase.from('subscriptions').insert({
+          tenant_id: prof.tenant_id,
+          student_id: newProfileId,
+          plan_id: studentForm.planId,
+          status: 'ACTIVE',
+          current_period_end: studentForm.nextDueDate || new Date().toISOString()
+        });
+      }
+
+      alert('Aluno cadastrado com sucesso!');
+      
+      fetchDashboardData(); // Refresh UI para carregar tudo (incluindo o inner join)
+      setShowStudentModal(false);
+      setStudentForm({
+        fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
+        address: '', city: '', state: '', cep: '', company: '', profession: '',
+        planId: '', paymentMethod: 'PIX', billingFreq: 'MONTHLY', amount: '',
+        startDate: '', nextDueDate: '',
+        goals: '', healthRestrictions: '', anamnesisNote: '',
+        status: 'Ativo', emergencyContactName: '', emergencyContactPhone: '',
+        emergencyContactRelation: '', monthlyFee: '', dueDay: '5'
+      });
+    } catch(err: any) {
+      alert("Erro ao salvar aluno: " + err.message);
+    }
+  };
+
   // Auth protection (MVP level)
   useEffect(() => {
     const checkUser = async () => {
@@ -310,6 +413,21 @@ export default function Dashboard() {
     };
     checkUser();
   }, [router]);
+
+  useEffect(() => {
+    const fetchNews = async () => {
+      try {
+        const res = await fetch('https://api.rss2json.com/v1/api.json?rss_url=https://ge.globo.com/rss/eu-atleta/');
+        const data = await res.json();
+        if (data && data.items) {
+          setFitnessNews(data.items.slice(0, 3));
+        }
+      } catch (err) {
+        console.error('Failed to fetch news', err);
+      }
+    };
+    fetchNews();
+  }, []);
 
   if (loading) return <div className={styles.loading}>Carregando plataforma...</div>;
 
@@ -365,7 +483,65 @@ export default function Dashboard() {
                 <h2>Visão Geral</h2>
                 <p style={{ color: '#94a3b8', marginTop: '5px' }}>Bem-vindo ao controle de comando da sua consultoria.</p>
               </div>
-              <button className="btn btn-primary">+ Novo Aluno</button>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ position: 'relative' }}>
+                  <div 
+                    onClick={() => setShowProfileMenu(!showProfileMenu)}
+                    style={{
+                    width: '55px', 
+                    height: '55px', 
+                    borderRadius: '50%', 
+                    backgroundColor: '#3f3f46',
+                    backgroundImage: 'url(https://i.pravatar.cc/150?u=nerofit)',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    border: '2px solid var(--primary)',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                  }} title="Meu Perfil">
+                  </div>
+                  
+                  {showProfileMenu && (
+                    <>
+                      <div 
+                        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9998 }} 
+                        onClick={() => setShowProfileMenu(false)}
+                      ></div>
+                      <div style={{
+                        position: 'absolute',
+                        top: '65px',
+                        right: '0',
+                        width: '240px',
+                        backgroundColor: '#18181b',
+                        border: '1px solid #3f3f46',
+                        borderRadius: '8px',
+                        boxShadow: '0 10px 25px rgba(0,0,0,0.9)',
+                        padding: '10px 0',
+                        zIndex: 9999,
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}>
+                        <button onClick={() => alert("Upload de foto em breve")} style={{ padding: '10px 15px', backgroundColor: '#18181b', border: 'none', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.9rem' }}>📷 Trocar Foto</button>
+                        <button onClick={() => alert("Configurações em breve")} style={{ padding: '10px 15px', backgroundColor: '#18181b', border: 'none', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.9rem' }}>⚙️ Configurações</button>
+                        <div style={{ height: '1px', backgroundColor: '#3f3f46', margin: '5px 0' }}></div>
+                        
+                        <div style={{ padding: '10px 15px' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#a1a1aa', textTransform: 'uppercase', fontWeight: 'bold' }}>🚨 SOS Emergência</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                            <span style={{ color: '#a1a1aa', fontSize: '0.85rem' }}>Polícia Militar: <strong style={{color: '#fff'}}>190</strong></span>
+                            <span style={{ color: '#a1a1aa', fontSize: '0.85rem' }}>SAMU: <strong style={{color: '#fff'}}>192</strong></span>
+                            <span style={{ color: '#a1a1aa', fontSize: '0.85rem' }}>Bombeiros: <strong style={{color: '#fff'}}>193</strong></span>
+                          </div>
+                        </div>
+                        
+                        <div style={{ height: '1px', backgroundColor: '#3f3f46', margin: '5px 0' }}></div>
+                        <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login'; }} style={{ padding: '10px 15px', backgroundColor: '#18181b', border: 'none', color: '#ef4444', textAlign: 'left', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 'bold' }}>🚪 Sair da Plataforma</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className={styles.dashboardLayout}>
@@ -377,27 +553,23 @@ export default function Dashboard() {
                 <div className={styles.quickAccessGrid}>
                   <button className={`${styles.quickCard} ${styles.qcPrimary}`} onClick={() => setActiveTab('agenda')}>
                     <span className={styles.qcIcon}>📅</span>
-                    <span className={styles.qcText}>Minha Agenda</span>
+                    <span className={styles.qcText}>Agenda</span>
                   </button>
                   <button className={`${styles.quickCard} ${styles.qcSecondary}`} onClick={() => setActiveTab('clientes')}>
                     <span className={styles.qcIcon}>👥</span>
                     <span className={styles.qcText}>Alunos</span>
                   </button>
+                  <button className={`${styles.quickCard} ${styles.qcDark}`}>
+                    <span className={styles.qcIcon}>🛠️</span>
+                    <span className={styles.qcText}>Ferramentas</span>
+                  </button>
                   <button className={`${styles.quickCard} ${styles.qcTertiary}`} onClick={() => setActiveTab('financeiro')}>
                     <span className={styles.qcIcon}>💲</span>
                     <span className={styles.qcText}>Financeiro</span>
                   </button>
-                  <button className={`${styles.quickCard} ${styles.qcQuaternary}`}>
-                    <span className={styles.qcIcon}>📋</span>
-                    <span className={styles.qcText}>Treinos e Fichas</span>
-                  </button>
-                  <button className={`${styles.quickCard} ${styles.qcDark}`} onClick={() => setActiveTab('crm')}>
+                  <button className={`${styles.quickCard} ${styles.qcQuaternary}`} onClick={() => setActiveTab('crm')}>
                     <span className={styles.qcIcon}>🎯</span>
-                    <span className={styles.qcText}>CRM & Leads</span>
-                  </button>
-                  <button className={`${styles.quickCard} ${styles.qcDark}`}>
-                    <span className={styles.qcIcon}>🛠️</span>
-                    <span className={styles.qcText}>Ferramentas</span>
+                    <span className={styles.qcText}>CRM Leads</span>
                   </button>
                 </div>
 
@@ -419,22 +591,21 @@ export default function Dashboard() {
                     <span style={{ fontSize: '0.8rem', color: 'var(--primary)' }}>Atualizado hoje</span>
                   </div>
                   <div className={styles.newsList} style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-                    <div style={{ display: 'flex', gap: 15, cursor: 'pointer' }}>
-                      <div style={{ width: 80, height: 60, background: '#3f3f46', borderRadius: 8, flexShrink: 0, backgroundImage: 'url(https://images.unsplash.com/photo-1549060279-7e168fcee0c2?q=80&w=200)', backgroundSize: 'cover' }}></div>
-                      <div>
-                        <h4 style={{ fontSize: '0.95rem', margin: '0 0 5px 0', lineHeight: 1.3 }}>Estudo revela o impacto do Treino HIIT no VO2 Max em apenas 4 semanas</h4>
-                        <span style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Fonte: Journal of Sports Science • Há 2h</span>
+                    {fitnessNews.length === 0 ? (
+                      <div style={{ color: '#71717a', fontSize: '0.9rem', textAlign: 'center', padding: '20px 0' }}>Buscando notícias diárias...</div>
+                    ) : null}
+                    
+                    {fitnessNews.map((newsItem, index) => (
+                      <div key={index} style={{ display: 'flex', gap: 15, cursor: 'pointer' }} onClick={() => window.open(newsItem.link, '_blank')}>
+                        <div style={{ width: 80, height: 60, background: '#3f3f46', borderRadius: 8, flexShrink: 0, backgroundImage: `url(${newsItem.thumbnail || 'https://images.unsplash.com/photo-1549060279-7e168fcee0c2?q=80&w=200'})`, backgroundSize: 'cover', backgroundPosition: 'center' }}></div>
+                        <div>
+                          <h4 style={{ fontSize: '0.95rem', margin: '0 0 5px 0', lineHeight: 1.3 }}>{newsItem.title}</h4>
+                          <span style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Fonte: G1 Saúde • {new Date(newsItem.pubDate).toLocaleDateString('pt-BR')}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 15, cursor: 'pointer' }}>
-                      <div style={{ width: 80, height: 60, background: '#3f3f46', borderRadius: 8, flexShrink: 0, backgroundImage: 'url(https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=200)', backgroundSize: 'cover' }}></div>
-                      <div>
-                        <h4 style={{ fontSize: '0.95rem', margin: '0 0 5px 0', lineHeight: 1.3 }}>Nova diretriz de nutrição desportiva atualiza necessidade de proteína diária</h4>
-                        <span style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Fonte: NutriFit • Há 5h</span>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                  <button className={styles.widgetBtn} style={{ width: '100%', marginTop: 15, padding: 10, background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 8, color: '#fff', cursor: 'pointer' }}>Ver Mais Notícias</button>
+                  <button className={styles.widgetBtn} style={{ width: '100%', marginTop: 15, padding: 10, background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 8, color: '#fff', cursor: 'pointer' }} onClick={() => window.open('https://g1.globo.com/saude/', '_blank')}>Ver Mais Notícias</button>
                 </div>
 
               </div>
@@ -1279,6 +1450,100 @@ export default function Dashboard() {
             </div>
           </div>
         );
+
+      case 'clientes':
+        const filteredStudents = students.filter(s => {
+          const matchSearch = s.full_name?.toLowerCase().includes(studentSearch.toLowerCase()) || s.email?.toLowerCase().includes(studentSearch.toLowerCase());
+          const sStatus = s.student_details?.[0]?.status || 'Ativo';
+          const matchFilter = studentFilter === 'Todos' || sStatus === studentFilter;
+          return matchSearch && matchFilter;
+        });
+        return (
+          <div className={styles.tabContent}>
+            <div className={styles.header}>
+              <div>
+                <h2>Seus Alunos</h2>
+                <p style={{ color: '#94a3b8', marginTop: '5px' }}>Gerencie perfis, prontuários e matrículas.</p>
+              </div>
+              <button className="btn btn-primary" onClick={() => setShowStudentModal(true)}>+ Adicionar Aluno</button>
+            </div>
+
+            <div className={styles.financeTransactions} style={{ marginTop: 20 }}>
+              <div className={styles.transactionFilters}>
+                <input 
+                  type="text" 
+                  placeholder="Buscar por nome ou e-mail..." 
+                  className={styles.modalInput} 
+                  style={{ maxWidth: 300 }} 
+                  value={studentSearch}
+                  onChange={e => setStudentSearch(e.target.value)}
+                />
+                <select 
+                  className={styles.modalInput} 
+                  style={{ maxWidth: 150 }}
+                  value={studentFilter}
+                  onChange={e => setStudentFilter(e.target.value)}
+                >
+                  <option value="Todos">Status: Todos</option>
+                  <option value="Ativo">Ativo</option>
+                  <option value="Inativo">Inativo</option>
+                  <option value="Pausado">Pausado</option>
+                </select>
+              </div>
+
+              <table className={styles.dataTable}>
+                <thead>
+                  <tr>
+                    <th>Nome do Aluno</th>
+                    <th>E-mail</th>
+                    <th>WhatsApp</th>
+                    <th>Plano Atual</th>
+                    <th>Status</th>
+                    <th>Data Cadastro</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStudents.map(s => {
+                    const status = s.student_details?.[0]?.status || 'Ativo';
+                    let statusColor = '#10b981'; // Green
+                    if (status === 'Inativo') statusColor = '#ef4444'; // Red
+                    if (status === 'Pausado') statusColor = '#f59e0b'; // Amber
+
+                    return (
+                      <tr key={s.id} onClick={() => router.push(`/dashboard/clientes/${s.id}`)} style={{ cursor: 'pointer' }} className={styles.tableRowHover}>
+                        <td>
+                          <div className={styles.tableClientProfile}>
+                            <div className={styles.avatar}>{(s.full_name || 'A')[0]}</div>
+                            <span style={{ fontWeight: 600, color: '#fff' }}>{s.full_name}</span>
+                          </div>
+                        </td>
+                        <td style={{ color: '#a1a1aa' }}>{s.email || '-'}</td>
+                        <td style={{ color: '#a1a1aa' }}>{s.phone || '-'}</td>
+                        <td style={{ color: '#cbd5e1' }}>{s.student_details?.[0]?.plan_name_cache || 'Sem plano fixo'}</td>
+                        <td>
+                          <span style={{ 
+                            background: `${statusColor}20`, 
+                            color: statusColor, 
+                            padding: '4px 8px', 
+                            borderRadius: '12px', 
+                            fontSize: '0.75rem',
+                            fontWeight: 600
+                          }}>
+                            {status}
+                          </span>
+                        </td>
+                        <td style={{ color: '#71717a' }}>{s.created_at ? new Date(s.created_at).toLocaleDateString('pt-BR') : '-'}</td>
+                      </tr>
+                    );
+                  })}
+                  {filteredStudents.length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', color: '#71717a', padding: '40px 0' }}>Nenhum aluno encontrado usando seus filtros.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
       case 'ferramentas':
         return (
           <div className={styles.tabContent}>
@@ -2031,12 +2296,73 @@ export default function Dashboard() {
                     <label className={styles.modalLabel}>Data de Nascimento</label>
                     <input className={styles.modalInput} type="date" value={studentForm.birthDate} onChange={e => setStudentForm({...studentForm, birthDate: e.target.value})} />
                   </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Gênero</label>
+                    <select className={styles.modalInput} value={studentForm.gender} onChange={e => setStudentForm({...studentForm, gender: e.target.value})}>
+                      <option value="">-- Selecione --</option>
+                      <option value="Masculino">Masculino</option>
+                      <option value="Feminino">Feminino</option>
+                      <option value="Outro">Outro</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className={styles.formRow} style={{ marginTop: 15 }}>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Empresa (Local de Trabalho)</label>
+                    <input className={styles.modalInput} type="text" placeholder="Ex: Itaú, Google..." value={studentForm.company} onChange={e => setStudentForm({...studentForm, company: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Profissão / Cargo</label>
+                    <input className={styles.modalInput} type="text" placeholder="Ex: Advogado, Dev..." value={studentForm.profession} onChange={e => setStudentForm({...studentForm, profession: e.target.value})} />
+                  </div>
+                </div>
+
+                <div className={styles.formRow} style={{ marginTop: 15 }}>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Endereço Completo</label>
+                    <input className={styles.modalInput} type="text" placeholder="Rua, Num, Bairro..." value={studentForm.address} onChange={e => setStudentForm({...studentForm, address: e.target.value})} />
+                  </div>
+                </div>
+                <div className={styles.formRow} style={{ marginTop: 15 }}>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Cidade</label>
+                    <input className={styles.modalInput} type="text" placeholder="São Paulo" value={studentForm.city} onChange={e => setStudentForm({...studentForm, city: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Estado / UF</label>
+                    <input className={styles.modalInput} type="text" placeholder="SP" value={studentForm.state} onChange={e => setStudentForm({...studentForm, state: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>CEP</label>
+                    <input className={styles.modalInput} type="text" placeholder="00000-000" value={studentForm.cep} onChange={e => setStudentForm({...studentForm, cep: e.target.value})} />
+                  </div>
+                </div>
+              </div>
+
+
+              {/* SECTION: EMERGENCIA */}
+              <div className={styles.formSection} style={{ marginTop: 30 }}>
+                <h5 className={styles.formSectionTitle} style={{ borderBottom: '1px solid #333', paddingBottom: 10 }}>2. Contato de Emergência</h5>
+                <div className={styles.formRow} style={{ marginTop: 15 }}>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Nome do Contato</label>
+                    <input className={styles.modalInput} type="text" placeholder="Mãe, Pai, Cônjuge..." value={studentForm.emergencyContactName} onChange={e => setStudentForm({...studentForm, emergencyContactName: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Telefone (Emergência)</label>
+                    <input className={styles.modalInput} type="text" placeholder="(11) 9..." value={studentForm.emergencyContactPhone} onChange={e => setStudentForm({...studentForm, emergencyContactPhone: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Relação / Parentesco</label>
+                    <input className={styles.modalInput} type="text" placeholder="Ex: Pai" value={studentForm.emergencyContactRelation} onChange={e => setStudentForm({...studentForm, emergencyContactRelation: e.target.value})} />
+                  </div>
                 </div>
               </div>
 
               {/* SECTION: PLANO / FINANCEIRO */}
               <div className={styles.formSection} style={{ marginTop: 30 }}>
-                <h5 className={styles.formSectionTitle} style={{ borderBottom: '1px solid #333', paddingBottom: 10 }}>2. Pacote / Financeiro</h5>
+                <h5 className={styles.formSectionTitle} style={{ borderBottom: '1px solid #333', paddingBottom: 10 }}>3. Pacote / Financeiro</h5>
                 <div className={styles.formRow} style={{ marginTop: 15 }}>
                   <div className={styles.formCol}>
                     <label className={styles.modalLabel}>Vincular a um Plano</label>
@@ -2052,12 +2378,28 @@ export default function Dashboard() {
                 </div>
                 <div className={styles.formRow} style={{ marginTop: 15 }}>
                   <div className={styles.formCol}>
-                    <label className={styles.modalLabel}>Forma de Pagto. Preferida</label>
+                    <label className={styles.modalLabel}>Valor Mensalidade (R$)</label>
+                    <input className={styles.modalInput} type="text" placeholder="297,00" value={studentForm.monthlyFee} onChange={e => setStudentForm({...studentForm, monthlyFee: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Dia de Venc. Fixo</label>
+                    <input className={styles.modalInput} type="number" placeholder="5" value={studentForm.dueDay} onChange={e => setStudentForm({...studentForm, dueDay: e.target.value})} />
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Forma de Pagto.</label>
                     <select className={styles.modalInput} value={studentForm.paymentMethod} onChange={e => setStudentForm({...studentForm, paymentMethod: e.target.value})}>
-                      <option value="PIX">Pix (Cobrança Automática via WhatsApp/Email)</option>
-                      <option value="CREDIT_CARD">Cartão de Crédito (Gateway)</option>
-                      <option value="BOLETO">Boleto Bancário</option>
-                      <option value="CASH">Dinheiro Físico / Outros</option>
+                      <option value="PIX">Pix (Cobrança WhatsApp)</option>
+                      <option value="CREDIT_CARD">Cartão</option>
+                      <option value="BOLETO">Boleto (Asaas)</option>
+                      <option value="CASH">Dinheiro</option>
+                    </select>
+                  </div>
+                  <div className={styles.formCol}>
+                    <label className={styles.modalLabel}>Status CRM</label>
+                    <select className={styles.modalInput} value={studentForm.status} onChange={e => setStudentForm({...studentForm, status: e.target.value})}>
+                      <option value="Ativo">🟢 Ativo</option>
+                      <option value="Pausado">🟡 Pausado</option>
+                      <option value="Inativo">🔴 Inativo</option>
                     </select>
                   </div>
                 </div>
@@ -2065,7 +2407,7 @@ export default function Dashboard() {
 
               {/* SECTION: SAÚDE / OBJETIVOS */}
               <div className={styles.formSection} style={{ marginTop: 30 }}>
-                <h5 className={styles.formSectionTitle} style={{ borderBottom: '1px solid #333', paddingBottom: 10 }}>3. Saúde e Anamnese Rápida</h5>
+                <h5 className={styles.formSectionTitle} style={{ borderBottom: '1px solid #333', paddingBottom: 10 }}>4. Saúde e Anamnese Rápida</h5>
                 <div className={styles.formRow} style={{ marginTop: 15 }}>
                   <div className={styles.formCol}>
                     <label className={styles.modalLabel}>Objetivo Principal</label>
@@ -2089,10 +2431,7 @@ export default function Dashboard() {
             
             <div className={styles.modalFooter} style={{ marginTop: 30 }}>
               <button className={styles.btnGeneric} onClick={() => setShowStudentModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" style={{ background: 'var(--primary)', color: '#000', border: 'none' }} onClick={() => {
-                alert('Ficha cadastrada com sucesso! (UI Mockup Finalizado). Em dev real isso salva no supabase profiles + subscriptions + anamnese.');
-                setShowStudentModal(false);
-              }}>Cadastrar Aluno Completamente</button>
+              <button className="btn btn-primary" style={{ background: 'var(--primary)', color: '#000', border: 'none' }} onClick={handleSaveStudent}>Cadastrar Aluno Completamente</button>
             </div>
           </div>
         </div>

@@ -1,521 +1,235 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { supabase } from '../../../../utils/supabase/client';
-import styles from './page.module.css';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/utils/supabase/client';
+import styles from './Profile.module.css';
 
-export default function ClientProfile() {
+export default function ClientProfile({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const params = useParams();
-  const studentId = params.id as string;
 
-  const [loading, setLoading] = useState(true);
   const [student, setStudent] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, evaluations, workouts
-
-  const [evaluations, setEvaluations] = useState<any[]>([]);
-  const [workouts, setWorkouts] = useState<any[]>([]);
-  const [files, setFiles] = useState<any[]>([]);
-  const [invoices, setInvoices] = useState<any[]>([]);
-
-  const [showEvalModal, setShowEvalModal] = useState(false);
-  const [showWorkoutModal, setShowWorkoutModal] = useState(false);
-  const [showAnamneseModal, setShowAnamneseModal] = useState(false);
-
-  const [anamneseForm, setAnamneseForm] = useState({ goals: '', injuries: '' });
-  const [evalForm, setEvalForm] = useState({
-     weight: '', height: '',
-     chest: '', abd: '', thigh: '', triceps: '', subscapular: '', suprailiac: '', midaxillary: ''
-  });
-  const [workoutForm, setWorkoutForm] = useState({
-     name: '', goal: '', level: 'BEGINNER',
-     exercises: [{ name: '', sets: 3, reps: '10-12', rest: 60 }]
-  });
+  const [details, setDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('prontuario'); 
 
   useEffect(() => {
-    const fetchStudentData = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-         router.push('/login');
-         return;
-      }
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', studentId).single();
-      if (data) {
-         setStudent(data);
-         const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).single();
-         if (prof) {
-            const { data: evals } = await supabase.from('physical_evaluations')
-               .select('*')
-               .eq('student_id', studentId)
-               .order('date', { ascending: false });
-            if (evals) setEvaluations(evals);
-
-            const { data: wks } = await supabase.from('workout_prescriptions')
-               .select(`*, workout_items(*)`)
-               .eq('student_id', studentId)
-               .order('created_at', { ascending: false });
-            if (wks) setWorkouts(wks);
-            const { data: details } = await supabase.from('student_details')
-               .select('*')
-               .eq('profile_id', studentId)
-               .single();
-            if (details) {
-               setStudent((prev: any) => ({ ...prev, details }));
-               setAnamneseForm({ goals: details.goals || '', injuries: details.injuries || '' });
-            }
-
-            const { data: invs } = await supabase.from('invoices')
-               .select('*')
-               .eq('student_id', studentId)
-               .order('due_date', { ascending: false });
-            if (invs) setInvoices(invs);
-         }
+    async function loadData() {
+      const { data: profData, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', params.id)
+        .single();
+      
+      if (!profErr && profData) {
+        setStudent(profData);
+        
+        const { data: detData } = await supabase
+          .from('student_details')
+          .select('*')
+          .eq('profile_id', params.id)
+          .single();
+        
+        if (detData) {
+          setDetails(detData);
+        }
       }
       setLoading(false);
-    };
+    }
+    loadData();
+  }, [params.id]);
 
-    if (studentId) fetchStudentData();
-  }, [studentId, router]);
+  if (loading) {
+    return <div className={styles.loadingState}>Carregando Ficha do Aluno...</div>;
+  }
 
-  const handleSaveAnamnese = async () => {
-     try {
-         const { error } = await supabase.from('student_details').upsert({
-            profile_id: studentId,
-            goals: anamneseForm.goals,
-            injuries: anamneseForm.injuries
-         }, { onConflict: 'profile_id' });
-         
-         if (error) {
-             if (error.message.includes('does not exist')) {
-                 alert("Salvando na UI (Tabela não inicializada no DB, execute schema.sql)");
-             } else throw error;
-         } else {
-             alert('Anamnese atualizada com sucesso!');
-         }
-         
-         setStudent((prev: any) => ({...prev, details: anamneseForm}));
-         setShowAnamneseModal(false);
-     } catch(e: any) {
-         alert("Erro: " + e.message);
-     }
-  };
+  if (!student) {
+    return (
+      <div className={styles.loadingState}>
+        <h2>Aluno não encontrado</h2>
+        <button className={styles.btnGeneric} onClick={() => router.push('/dashboard?tab=clientes')}>Voltar</button>
+      </div>
+    );
+  }
 
-  const handleSaveEvaluation = async () => {
-     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Sessão expirada.");
-        const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).single();
-        if (!prof) throw new Error("Autorização negada.");
-
-        const payload = {
-           student_id: studentId,
-           tenant_id: prof.tenant_id,
-           weight_kg: parseFloat(evalForm.weight.replace(',','.')),
-           height_cm: parseFloat(evalForm.height),
-           fold_chest: parseFloat(evalForm.chest.replace(',','.')),
-           fold_abdominal: parseFloat(evalForm.abd.replace(',','.')),
-           fold_thigh: parseFloat(evalForm.thigh.replace(',','.')),
-           fold_triceps: parseFloat(evalForm.triceps.replace(',','.')),
-           fold_subscapular: parseFloat(evalForm.subscapular.replace(',','.')),
-           fold_suprailiac: parseFloat(evalForm.suprailiac.replace(',','.')),
-           fold_midaxillary: parseFloat(evalForm.midaxillary.replace(',','.'))
-        };
-
-        const { error } = await supabase.from('physical_evaluations').insert(payload);
-        if (error) {
-           if (error.message.includes('does not exist')) {
-              alert('Salvo no estado (UI) temporariamente.\nNota Técnica: Rode a tabela physical_evaluations no painel.');
-           } else {
-              throw error;
-           }
-        } else {
-           alert("Avaliação Registrada!");
-        }
-
-        setShowEvalModal(false);
-        setEvalForm({ weight:'', height:'', chest:'', abd:'', thigh:'', triceps:'', subscapular:'', suprailiac:'', midaxillary:'' });
-        // recarregar idealmente
-     } catch(e: any) {
-        alert("Erro: " + e.message);
-     }
-  };
-
-  const handleSaveWorkout = async () => {
-    try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Sessão expirada.");
-        const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).single();
-        if (!prof) throw new Error("Autorização negada.");
-
-        if (!workoutForm.name) throw new Error("A ficha precisa de um nome.");
-
-        // Insert Prescription (Mãe)
-        const { data: prescriptionData, error: presErr } = await supabase.from('workout_prescriptions').insert({
-            student_id: studentId,
-            tenant_id: prof.tenant_id,
-            name: workoutForm.name,
-            goal: workoutForm.goal,
-            level: workoutForm.level
-        }).select().single();
-
-        if (presErr) {
-             if (presErr.message.includes('does not exist')) {
-                 alert("Ficha Salva no Local State. Rodar backend schemas para ver persistência real.");
-                 setShowWorkoutModal(false);
-                 return;
-             } else {
-                 throw presErr;
-             }
-        }
-
-        // Insert Items
-        if (prescriptionData && workoutForm.exercises.length > 0) {
-            const items = workoutForm.exercises.map((ex, i) => ({
-                prescription_id: prescriptionData.id,
-                exercise_name: ex.name,
-                sets: ex.sets,
-                reps: ex.reps,
-                rest_seconds: ex.rest,
-                order_index: i
-            })).filter(x => x.exercise_name.trim() !== '');
-
-            if (items.length > 0) {
-                const { error: itemsErr } = await supabase.from('workout_items').insert(items);
-                if (itemsErr) throw itemsErr;
-            }
-        }
-
-        alert("Treino prescrito e vinculado ao aluno com sucesso!");
-        setShowWorkoutModal(false);
-        setWorkoutForm({ name: '', goal: '', level: 'BEGINNER', exercises: [{ name: '', sets: 3, reps: '10-12', rest: 60 }] });
-    } catch(e: any) {
-        alert("Erro ao salvar Treino: " + e.message);
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Inativo': return '#ef4444';
+      case 'Pausado': return '#f59e0b';
+      default: return '#10b981';
     }
   };
-
-  if (loading) return <div className={styles.loading}>Carregando perfil do aluno...</div>;
-  if (!student) return <div className={styles.loading}>Aluno não encontrado ou sem permissão.</div>;
+  const statusColor = getStatusColor(details?.status);
 
   return (
-    <div className={styles.layout}>
-       <div className={styles.topBar}>
-          <button className={styles.backBtn} onClick={() => router.push('/dashboard')}>❮ Voltar para Alunos</button>
-          <h2>Prontuário VIP</h2>
-       </div>
-
-       <div className={styles.profileHeader}>
-          <div className={styles.avatarLarge}>{(student.full_name || 'A')[0].toUpperCase()}</div>
-          <div className={styles.profileInfo}>
-             <h1>{student.full_name}</h1>
-             <p>{student.email}</p>
-             <div className={styles.tags}>
-                <span className={styles.tagActive}>Ativo</span>
-                <span className={styles.tagPlan}>Plano: Consultoria Online</span>
+    <div className={styles.pageContainer}>
+      {/* HEADER SECTION */}
+      <div className={styles.pageHeader}>
+        <div className={styles.headerLeft}>
+          <button className={styles.backBtn} onClick={() => router.push('/dashboard?tab=clientes')}>
+             <span style={{marginRight: 6}}>❮</span> Voltar
+          </button>
+          
+          <div className={styles.profileIdentify}>
+             <div className={styles.avatarHuge}>
+               {student.full_name ? student.full_name[0].toUpperCase() : 'A'}
+             </div>
+             <div>
+                <h1 className={styles.studentName}>
+                  {student.full_name}
+                  <span className={styles.statusPill} style={{ background: `${statusColor}20`, color: statusColor }}>
+                    {details?.status || 'Ativo'}
+                  </span>
+                </h1>
+                <p className={styles.studentSub}>Matriculado em {new Date(student.created_at).toLocaleDateString('pt-BR')}</p>
              </div>
           </div>
-       </div>
+        </div>
 
-       <div className={styles.tabsMenu}>
-          <button className={activeTab === 'overview' ? styles.tabActive : ''} onClick={() => setActiveTab('overview')}>Visão Geral & Anamnese</button>
-          <button className={activeTab === 'evaluations' ? styles.tabActive : ''} onClick={() => setActiveTab('evaluations')}>Avaliações Físicas</button>
-          <button className={activeTab === 'workouts' ? styles.tabActive : ''} onClick={() => setActiveTab('workouts')}>Prescrição de Treino</button>
-          <button className={activeTab === 'files' ? styles.tabActive : ''} onClick={() => setActiveTab('files')}>Arquivos / Termos</button>
-          <button className={activeTab === 'history' ? styles.tabActive : ''} onClick={() => setActiveTab('history')}>Histórico Financeiro</button>
-       </div>
+        <div className={styles.headerRight}>
+          <button className={styles.btnPrimary}>+ Adicionar Sessão/Aviso</button>
+          <button className={styles.btnSecondary} onClick={() => window.open(`https://wa.me/${student.phone.replace(/\\D/g, '')}`)}>Falar no WhatsApp</button>
+        </div>
+      </div>
 
-       <div className={styles.tabContentContainer}>
-          {activeTab === 'overview' && (
-             <div className={styles.overviewGrid}>
-                <div className={styles.card}>
-                   <h3>Anamnese e Saúde</h3>
-                   {student.details?.goals ? (
-                      <p><strong>Objetivo:</strong> {student.details?.goals}</p>
-                   ) : (
-                      <p className={styles.emptyText}>Nenhum objetivo preenchido.</p>
-                   )}
-                   {student.details?.injuries ? (
-                      <p><strong>Lesões/Restrições:</strong> {student.details?.injuries}</p>
-                   ) : (
-                      <p className={styles.emptyText}>Nenhuma restrição relatada.</p>
-                   )}
-                   <button className="btn btn-primary" onClick={() => setShowAnamneseModal(true)} style={{marginTop: 15, background: 'var(--secondary)', color: '#000', border: 'none'}}>✏️ Editar Anamnese</button>
-                </div>
-                <div className={styles.card}>
-                   <h3>Metas e Timeline</h3>
-                   <p className={styles.emptyText}>Integração com eventos previstos no calendário (Consultas).</p>
-                </div>
-             </div>
-          )}
+      {/* TABS MENU */}
+      <div className={styles.tabsMenu}>
+        <div className={`${styles.tabItem} ${activeTab === 'prontuario' ? styles.tabActive : ''}`} onClick={() => setActiveTab('prontuario')}>
+          Prontuário Médico & Pessoal
+        </div>
+        <div className={`${styles.tabItem} ${activeTab === 'financeiro' ? styles.tabActive : ''}`} onClick={() => setActiveTab('financeiro')}>
+          Financeiro & Planos
+        </div>
+        <div className={`${styles.tabItem} ${activeTab === 'arquivos' ? styles.tabActive : ''}`} onClick={() => setActiveTab('arquivos')}>
+          Evolução Física (Fotos/Documentos)
+        </div>
+        <div className={`${styles.tabItem} ${activeTab === 'historico' ? styles.tabActive : ''}`} onClick={() => setActiveTab('historico')}>
+          Histórico e Notas
+        </div>
+      </div>
 
-          {activeTab === 'evaluations' && (
-             <div className={styles.card}>
-                <div style={{display:'flex', justifyContent: 'space-between', marginBottom: 20}}>
-                   <h3>Composição Corporal</h3>
-                   <button className="btn btn-primary" onClick={() => setShowEvalModal(true)}>+ Nova Avaliação (Protocolo 7 Dobras)</button>
-                </div>
-                
-                {evaluations.length > 0 ? (
-                   <div style={{display:'grid', gap:'15px'}}>
-                      {evaluations.map(ev => (
-                         <div key={ev.id} style={{padding: 15, background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.05)'}}>
-                            <h4 style={{marginBottom: 10, display:'flex', justifyContent:'space-between'}}>
-                               <span>Data: {new Date(ev.date).toLocaleDateString('pt-BR')}</span>
-                               <span style={{color:'var(--primary)'}}>Peso: {ev.weight_kg}kg</span>
-                            </h4>
-                            <p style={{fontSize:'0.85rem', color:'#71717a'}}>Dobras (Pollock): Peito {ev.fold_chest}, Abd {ev.fold_abdominal}, Coxa {ev.fold_thigh}, Triceps {ev.fold_triceps}</p>
-                         </div>
-                      ))}
-                   </div>
-                ) : (
-                   <div className={styles.placeholderCard} style={{height: 200, display:'flex', alignItems:'center', justifyContent:'center'}}>
-                      Grafico de Evolução e Antropometria serão exibidos aqui após inserir dados.
-                   </div>
-                )}
-             </div>
-          )}
+      {/* TABS CONTENT */}
+      <div className={styles.tabContentArea}>
+        
+        {activeTab === 'prontuario' && (
+          <div className={styles.grid2Col}>
+            <div className={styles.cardInfo}>
+              <h3>Informações Pessoais</h3>
+              <ul>
+                <li><strong>Gênero:</strong> {details?.gender || '-'}</li>
+                <li><strong>Nascimento:</strong> {details?.birth_date ? new Date(details.birth_date).toLocaleDateString('pt-BR') : '-'}</li>
+                <li><strong>CPF:</strong> {details?.cpf || '-'}</li>
+                <li><strong>E-mail:</strong> {student.email}</li>
+                <li><strong>Telefone:</strong> {student.phone}</li>
+                <li><strong>Endereço:</strong> {details?.address_line ? `${details.address_line}, ${details.city} - ${details.state}` : '-'}</li>
+              </ul>
+              
+              <h3 style={{ marginTop: 25 }}>Contato de Emergência</h3>
+              <ul>
+                <li><strong>Nome:</strong> {details?.emergency_contact_name || '-'}</li>
+                <li><strong>Telefone:</strong> {details?.emergency_contact_phone || '-'}</li>
+                <li><strong>Parentesco:</strong> {details?.emergency_contact_relation || '-'}</li>
+              </ul>
+            </div>
 
-          {activeTab === 'workouts' && (
-             <div className={styles.card}>
-                <div style={{display:'flex', justifyContent: 'space-between', marginBottom: 20}}>
-                   <h3>Fichas de Treino</h3>
-                   <div>
-                       <button className="btn btn-primary" style={{marginRight: 10, background: '#a855f7', border:'none'}}>🪄 Gerar Treino via I.A.</button>
-                       <button className="btn btn-primary" onClick={() => setShowWorkoutModal(true)}>+ Montar Ficha Manual</button>
-                   </div>
-                </div>
+            <div className={styles.cardInfo}>
+              <h3>Anamnese e Objetivos</h3>
+              <div className={styles.highlightBlock}>
+                <strong>Objetivo Principal:</strong>
+                <p>{details?.goals || 'Não preenchido'}</p>
+              </div>
 
-                {workouts.length > 0 ? (
-                   <div style={{display:'grid', gap:'20px'}}>
-                      {workouts.map(w => (
-                         <div key={w.id} style={{padding: 20, background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)'}}>
-                            <div style={{display:'flex', justifyContent:'space-between', marginBottom: 15}}>
-                                <div>
-                                    <h4 style={{fontSize:'1.1rem', marginBottom: 4}}>{w.name}</h4>
-                                    <span style={{fontSize:'0.8rem', color:'#71717a'}}>Objetivo: {w.goal} • Nível: {w.level}</span>
-                                </div>
-                                <button className={styles.btnGeneric} style={{padding: '5px 15px', fontSize:'0.8rem'}}>Ver PDF</button>
-                            </div>
-                            <div style={{display:'flex', flexDirection:'column', gap:'5px', marginTop: 10}}>
-                                {w.workout_items?.map((item: any) => (
-                                    <div key={item.id} style={{display:'flex', justifyContent:'space-between', padding:'8px 12px', background:'rgba(0,0,0,0.3)', borderRadius: 6}}>
-                                        <span style={{fontWeight:600}}>{item.exercise_name}</span>
-                                        <span style={{color:'#a1a1aa', fontSize:'0.9rem'}}>{item.sets}x {item.reps} rec: {item.rest_seconds}s</span>
-                                    </div>
-                                ))}
-                                {(!w.workout_items || w.workout_items.length === 0) && (
-                                   <p style={{color:'#71717a', fontSize:'0.85rem'}}>Nenhum exercício cadastrado nesta ficha.</p>
-                                )}
-                            </div>
-                         </div>
-                      ))}
-                   </div>
-                ) : (
-                    <p className={styles.emptyText}>Este aluno ainda não possui uma ficha de treino vinculada.</p>
-                )}
-             </div>
-          )}
+              <div className={styles.highlightBlock} style={{ borderLeftColor: '#ef4444' }}>
+                <strong style={{ color: '#ef4444' }}>Restrições Físicas / Lesões:</strong>
+                <p>{details?.injuries || 'Nenhuma informada'}</p>
+              </div>
 
-          {activeTab === 'files' && (
-             <div className={styles.card}>
-                <div style={{display:'flex', justifyContent: 'space-between', marginBottom: 20}}>
-                   <h3>Arquivos Confidenciais e Termos</h3>
-                   <button className="btn btn-primary" onClick={() => {
-                        const fileName = prompt("Nome do arquivo/termo:");
-                        if (!fileName) return;
-                        alert("Note: A lógica de Upload via Supabase Storage real deve ser conectada aqui. O arquivo será mockado localmente na interface por enquanto.");
-                        const newFile = { id: Date.now(), name: fileName, type: 'DOCUMENT', file_url: '#', created_at: new Date().toISOString() };
-                        setFiles([newFile, ...files]);
-                   }}>+ Adicionar Arquivo</button>
-                </div>
-                
-                {files.length > 0 ? (
-                    <div style={{display:'grid', gap:'10px'}}>
-                        {files.map(f => (
-                           <div key={f.id} style={{display:'flex', justifyContent:'space-between', padding:'12px 15px', background:'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', alignItems: 'center'}}>
-                               <div style={{display:'flex', alignItems: 'center', gap: 10}}>
-                                  <span style={{fontSize: '1.2rem'}}>📄</span>
-                                  <div>
-                                     <h4 style={{fontWeight: 500, margin: 0, fontSize: '0.95rem'}}>{f.name}</h4>
-                                     <span style={{fontSize: '0.75rem', color: '#a1a1aa'}}>{new Date(f.created_at).toLocaleDateString('pt-BR')}</span>
-                                  </div>
-                               </div>
-                               <div>
-                                  <button className={styles.btnGeneric} style={{fontSize: '0.8rem', padding: '5px 10px'}}>Baixar</button>
-                               </div>
-                           </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className={styles.placeholderCard} style={{height: 150, display:'flex', alignItems:'center', justifyContent:'center'}}>
-                       Nenhum arquivo ou termo assinado encontrado.
-                    </div>
-                )}
-             </div>
-          )}
+              <div className={styles.highlightBlock}>
+                <strong>Notas de Anamnese Adicionais:</strong>
+                <p>{details?.notes || '-'}</p>
+              </div>
 
-          {activeTab === 'history' && (
-             <div className={styles.card}>
-                <div style={{display:'flex', justifyContent: 'space-between', marginBottom: 20}}>
-                   <h3>Histórico de Faturas e Mensalidades</h3>
-                </div>
-                
-                {invoices.length > 0 ? (
-                    <div style={{display:'grid', gap:'10px'}}>
-                        {invoices.map(inv => (
-                           <div key={inv.id} style={{display:'flex', justifyContent:'space-between', padding:'12px 15px', background:'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', alignItems: 'center'}}>
-                               <div style={{display:'flex', alignItems: 'center', gap: 10}}>
-                                  <div style={{width: 8, height: 8, borderRadius: '50%', background: inv.status === 'PAID' ? 'var(--primary)' : inv.status === 'OVERDUE' ? '#ef4444' : '#eab308'}}></div>
-                                  <div>
-                                     <h4 style={{fontWeight: 500, margin: 0, fontSize: '0.95rem'}}>Fatura {inv.description ? `- ${inv.description}` : ''}</h4>
-                                     <span style={{fontSize: '0.75rem', color: '#a1a1aa'}}>Venc: {new Date(inv.due_date).toLocaleDateString('pt-BR')} • Via {inv.payment_method}</span>
-                                  </div>
-                               </div>
-                               <div style={{textAlign: 'right'}}>
-                                  <strong style={{display: 'block', fontSize: '1rem'}}>R$ {(inv.amount_cents / 100).toFixed(2).replace('.', ',')}</strong>
-                                  <span style={{fontSize: '0.75rem', color: inv.status === 'PAID' ? 'var(--primary)' : inv.status === 'OVERDUE' ? '#ef4444' : '#eab308'}}>
-                                     {inv.status === 'PAID' ? 'Pago' : inv.status === 'OVERDUE' ? 'Atrasado' : 'Pendente'}
-                                  </span>
-                               </div>
-                           </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className={styles.placeholderCard} style={{height: 150, display:'flex', alignItems:'center', justifyContent:'center'}}>
-                       Nenhuma fatura encontrada no histórico deste aluno.
-                    </div>
-                )}
-             </div>
-          )}
-       </div>
+              <div className={styles.actionRow} style={{ marginTop: 20 }}>
+                 <button className={styles.btnGeneric}>Editar Dados</button>
+                 <button className={styles.btnGeneric} style={{color: '#f59e0b', borderColor: '#f59e0b'}}>Atualizar Ficha Avaliativa</button>
+              </div>
+            </div>
+          </div>
+        )}
 
-       {/* MODAL DE ANAMNESE */}
-       {showAnamneseModal && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modalContent}>
-               <div className={styles.modalHeader}>
-                  <h3>Anamnese e Saúde</h3>
-                  <button className={styles.modalCloseBtn} onClick={() => setShowAnamneseModal(false)}>✕</button>
+        {activeTab === 'financeiro' && (
+          <div className={styles.financeLayout}>
+             <div className={styles.cardInfo}>
+               <h3>Resumo Financeiro</h3>
+               <div className={styles.financeStatBox}>
+                 <span className={styles.statLabel}>Plano Atual</span>
+                 <strong className={styles.statValue}>{details?.plan_name_cache || 'Sem plano'}</strong>
                </div>
-               <div className={styles.modalBody}>
-                  <div className={styles.formRow} style={{marginBottom: 15, flexDirection: 'column'}}>
-                      <label className={styles.modalLabel}>Objetivos Físicos e Metas</label>
-                      <textarea className={styles.modalInput} style={{minHeight: 80, resize: 'vertical'}} placeholder="Descreva os objetivos principais do aluno..." value={anamneseForm.goals} onChange={e => setAnamneseForm({...anamneseForm, goals: e.target.value})}></textarea>
+               <div className={styles.grid2Col} style={{ gap: 15, marginTop: 15 }}>
+                  <div className={styles.financeStatBox}>
+                    <span className={styles.statLabel}>Mensalidade Fixa</span>
+                    <strong className={styles.statValue} style={{ fontSize: '1.2rem'}}>
+                      {details?.monthly_fee ? details.monthly_fee.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'Avulso'}
+                    </strong>
                   </div>
-                  <div className={styles.formRow} style={{marginBottom: 15, flexDirection: 'column'}}>
-                      <label className={styles.modalLabel}>Lesões e Restrições Médicas</label>
-                      <textarea className={styles.modalInput} style={{minHeight: 80, resize: 'vertical'}} placeholder="Ex: Hérnia L4/L5, condromalácia grau 2..." value={anamneseForm.injuries} onChange={e => setAnamneseForm({...anamneseForm, injuries: e.target.value})}></textarea>
+                  <div className={styles.financeStatBox}>
+                    <span className={styles.statLabel}>Dia de Vencimento</span>
+                    <strong className={styles.statValue} style={{ fontSize: '1.2rem'}}>
+                      {details?.due_day ? `Todo dia ${details.due_day}` : 'Automático'}
+                    </strong>
                   </div>
                </div>
-               <div className={styles.modalFooter}>
-                  <button className={styles.btnGeneric} onClick={() => setShowAnamneseModal(false)}>Cancelar</button>
-                  <button className="btn btn-primary" onClick={handleSaveAnamnese} style={{background: 'var(--secondary)', color: '#000', border: 'none'}}>Salvar Anamnese</button>
+               
+               <div className={styles.actionRow} style={{ marginTop: 20 }}>
+                 <button className={styles.btnPrimary}>Gerar Cobrança Avulsa (Pix)</button>
+                 <button className={styles.btnGeneric}>Pausar Mensalidades</button>
+               </div>
+             </div>
+
+             <div className={styles.cardInfo}>
+                <h3>Faturas Recentes</h3>
+                <table className={styles.invoiceTable}>
+                  <thead>
+                    <tr><th>Vencimento</th><th>Valor</th><th>Status</th><th>Ações</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', padding: 20, color: '#71717a'}}>
+                        Nenhuma fatura gerada para este aluno ainda.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+             </div>
+          </div>
+        )}
+
+        {activeTab === 'arquivos' && (
+          <div className={styles.cardInfo} style={{textAlign: 'center', padding: '60px 20px'}}>
+             <div style={{ fontSize: '3rem', marginBottom: 15 }}>📸</div>
+             <h3>Evolução Física</h3>
+             <p style={{ color: '#a1a1aa' }}>Esta área receberá upload das fotos comparativas de antes e depois e gráficos de bioimpedância.</p>
+             <button className={styles.btnGeneric} style={{ marginTop: 20 }}>Fazer Upload de Foto/Doc</button>
+          </div>
+        )}
+        
+        {activeTab === 'historico' && (
+          <div className={styles.cardInfo}>
+            <h3>Sessões Realizadas e Notas</h3>
+            <p style={{ color: '#a1a1aa', fontSize: '0.9rem' }}>Acompanhe todas as vezes que o aluno esteve com você e suas observações por treino.</p>
+             
+            <div className={styles.timeline}>
+               <div className={styles.timelineItem}>
+                 <div className={styles.timelineDot}></div>
+                 <div className={styles.timelineContent}>
+                    <strong>Matrícula Realizada no Sistema</strong>
+                    <p style={{ fontSize: '0.8rem', color: '#71717a' }}>{new Date(student.created_at).toLocaleDateString('pt-BR')} às {new Date(student.created_at).toLocaleTimeString('pt-BR')}</p>
+                 </div>
                </div>
             </div>
           </div>
-       )}
+        )}
 
-       {/* MODAL DE AVALIAÇÃO */}
-       {showEvalModal && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modalContent}>
-               <div className={styles.modalHeader}>
-                  <h3>Nova Avaliação Física</h3>
-                  <button className={styles.modalCloseBtn} onClick={() => setShowEvalModal(false)}>✕</button>
-               </div>
-               <div className={styles.modalBody}>
-                  <div className={styles.formRow} style={{marginBottom: 15}}>
-                     <div className={styles.formCol}>
-                        <label className={styles.modalLabel}>Peso (kg)</label>
-                        <input className={styles.modalInput} placeholder="Ex: 75.5" value={evalForm.weight} onChange={e => setEvalForm({...evalForm, weight: e.target.value})} />
-                     </div>
-                     <div className={styles.formCol}>
-                        <label className={styles.modalLabel}>Altura (cm)</label>
-                        <input className={styles.modalInput} placeholder="Ex: 180" value={evalForm.height} onChange={e => setEvalForm({...evalForm, height: e.target.value})} />
-                     </div>
-                  </div>
-                  <h4 style={{marginBottom: 10, marginTop: 20, color:'#a1a1aa', fontSize:'0.9rem'}}>Dobras Cutâneas (Protocolo Pollock 7 - mm)</h4>
-                  <div className={styles.formRow} style={{marginBottom: 15}}>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Peito</label><input className={styles.modalInput} value={evalForm.chest} onChange={e => setEvalForm({...evalForm, chest: e.target.value})}/></div>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Abdominal</label><input className={styles.modalInput} value={evalForm.abd} onChange={e => setEvalForm({...evalForm, abd: e.target.value})}/></div>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Coxa</label><input className={styles.modalInput} value={evalForm.thigh} onChange={e => setEvalForm({...evalForm, thigh: e.target.value})}/></div>
-                  </div>
-                  <div className={styles.formRow} style={{marginBottom: 15}}>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Tríceps</label><input className={styles.modalInput} value={evalForm.triceps} onChange={e => setEvalForm({...evalForm, triceps: e.target.value})}/></div>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Subescapular</label><input className={styles.modalInput} value={evalForm.subscapular} onChange={e => setEvalForm({...evalForm, subscapular: e.target.value})}/></div>
-                  </div>
-                  <div className={styles.formRow} style={{marginBottom: 15}}>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Suprailíaca</label><input className={styles.modalInput} value={evalForm.suprailiac} onChange={e => setEvalForm({...evalForm, suprailiac: e.target.value})}/></div>
-                     <div className={styles.formCol}><label className={styles.modalLabel}>Média Axilar</label><input className={styles.modalInput} value={evalForm.midaxillary} onChange={e => setEvalForm({...evalForm, midaxillary: e.target.value})}/></div>
-                  </div>
-               </div>
-               <div className={styles.modalFooter}>
-                  <button className={styles.btnGeneric} onClick={() => setShowEvalModal(false)}>Cancelar</button>
-                  <button className="btn btn-primary" onClick={handleSaveEvaluation} style={{background: 'var(--primary)', color: '#000', border: 'none'}}>Salvar Avaliação</button>
-               </div>
-            </div>
-          </div>
-       )}
-
-       {/* MODAL DE TREINO */}
-       {showWorkoutModal && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modalContent} style={{maxWidth: 700}}>
-               <div className={styles.modalHeader}>
-                  <h3>Prescrição de Treino</h3>
-                  <button className={styles.modalCloseBtn} onClick={() => setShowWorkoutModal(false)}>✕</button>
-               </div>
-               <div className={styles.modalBody}>
-                  <div className={styles.formRow} style={{marginBottom: 15}}>
-                     <div className={styles.formCol}>
-                        <label className={styles.modalLabel}>Nome do Treino</label>
-                        <input className={styles.modalInput} placeholder="Ex: Treino A - Peito/Tríceps" value={workoutForm.name} onChange={e => setWorkoutForm({...workoutForm, name: e.target.value})} />
-                     </div>
-                     <div className={styles.formCol}>
-                        <label className={styles.modalLabel}>Objetivo Foco</label>
-                        <input className={styles.modalInput} placeholder="Ex: Hipertrofia de MMSS" value={workoutForm.goal} onChange={e => setWorkoutForm({...workoutForm, goal: e.target.value})} />
-                     </div>
-                  </div>
-                  
-                  <h4 style={{marginBottom: 10, marginTop: 20, color:'#a1a1aa', fontSize:'0.9rem', display:'flex', justifyContent:'space-between'}}>
-                      Exercícios
-                      <button className={styles.btnGeneric} style={{padding: '3px 10px', fontSize: '0.75rem'}} onClick={() => {
-                          setWorkoutForm({...workoutForm, exercises: [...workoutForm.exercises, {name:'', sets:3, reps:'10-12', rest:60}]})
-                      }}>+ ADD EXERCÍCIO</button>
-                  </h4>
-                  <div style={{display:'flex', flexDirection:'column', gap:'10px', maxHeight: 300, overflowY:'auto', paddingRight:10}}>
-                      {workoutForm.exercises.map((ex, idx) => (
-                           <div key={idx} style={{display:'flex', gap:'10px', alignItems:'center'}}>
-                               <div className={styles.formCol} style={{flex: 2}}>
-                                  <input className={styles.modalInput} placeholder="Nome (Ex: Supino Reto)" value={ex.name} onChange={e => {
-                                      const n = [...workoutForm.exercises]; n[idx].name = e.target.value; setWorkoutForm({...workoutForm, exercises: n});
-                                  }}/>
-                               </div>
-                               <div className={styles.formCol} style={{flex: 0.5}}>
-                                  <input className={styles.modalInput} type="number" placeholder="Séries" value={ex.sets} onChange={e => {
-                                      const n = [...workoutForm.exercises]; n[idx].sets = parseInt(e.target.value)||0; setWorkoutForm({...workoutForm, exercises: n});
-                                  }}/>
-                               </div>
-                               <div className={styles.formCol} style={{flex: 0.8}}>
-                                  <input className={styles.modalInput} placeholder="Reps (Ex: 10-12)" value={ex.reps} onChange={e => {
-                                      const n = [...workoutForm.exercises]; n[idx].reps = e.target.value; setWorkoutForm({...workoutForm, exercises: n});
-                                  }}/>
-                               </div>
-                               <div className={styles.formCol} style={{flex: 0.6}}>
-                                  <input className={styles.modalInput} type="number" placeholder="Desc. (s)" value={ex.rest} onChange={e => {
-                                      const n = [...workoutForm.exercises]; n[idx].rest = parseInt(e.target.value)||0; setWorkoutForm({...workoutForm, exercises: n});
-                                  }}/>
-                               </div>
-                           </div>
-                      ))}
-                  </div>
-               </div>
-               <div className={styles.modalFooter}>
-                  <button className={styles.btnGeneric} onClick={() => setShowWorkoutModal(false)}>Cancelar</button>
-                  <button className="btn btn-primary" onClick={handleSaveWorkout} style={{background: '#a855f7', color: '#fff', border: 'none'}}>Prescrever Treino e Salvar</button>
-               </div>
-            </div>
-          </div>
-       )}
+      </div>
     </div>
   );
 }
