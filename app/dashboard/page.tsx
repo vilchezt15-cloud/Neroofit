@@ -341,15 +341,15 @@ export default function Dashboard() {
         role: 'STUDENT'
       };
 
+      let selectedPlanName = '';
+      if (studentForm.planId) {
+         const foundPlan = plans.find(p => p.id === studentForm.planId);
+         if (foundPlan) selectedPlanName = foundPlan.name;
+      }
+
       if (session) {
         const { error: profileErr } = await supabase.from('profiles').insert(profilePayload);
         if (profileErr) throw profileErr;
-
-        let selectedPlanName = '';
-        if (studentForm.planId) {
-           const foundPlan = plans.find(p => p.id === studentForm.planId);
-           if (foundPlan) selectedPlanName = foundPlan.name;
-        }
 
         const detailsPayload = {
           profile_id: newProfileId,
