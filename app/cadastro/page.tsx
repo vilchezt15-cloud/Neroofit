@@ -32,7 +32,18 @@ export default function Cadastro() {
     });
 
     if (authError) {
-      setErrorMsg(authError.message);
+      let friendlyMessage = authError.message;
+      if (friendlyMessage.includes('already registered') || friendlyMessage.includes('already exists')) {
+        friendlyMessage = 'Este e-mail já está cadastrado em nossa plataforma. Por favor, faça login.';
+      } else if (friendlyMessage.includes('Password should be at least')) {
+        friendlyMessage = 'A senha deve ter pelo menos 6 caracteres.';
+      } else if (friendlyMessage.includes('Invalid API key')) {
+        friendlyMessage = 'Erro de configuração: Chave da API (Supabase) inválida ou ausente.';
+      } else if (friendlyMessage.includes('To protect the security')) {
+         friendlyMessage = 'Muitas tentativas. Por favor aguarde alguns instantes.';
+      }
+
+      setErrorMsg(friendlyMessage);
       setLoading(false);
       return;
     }
