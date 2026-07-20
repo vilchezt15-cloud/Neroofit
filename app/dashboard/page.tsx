@@ -50,7 +50,7 @@ export default function Dashboard() {
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [studentForm, setStudentForm] = useState({
-    fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
+    id: '', fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
     address: '', city: '', state: '', cep: '', company: '', profession: '',
     planId: '', paymentMethod: 'PIX', billingFreq: 'MONTHLY', amount: '',
     startDate: '', nextDueDate: '',
@@ -321,7 +321,7 @@ export default function Dashboard() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
-      let tenantId = '00000000-0000-0000-0000-000000000000'; // Mock/Fallback
+      let tenantId = '00000000-0000-0000-0000-000000000000';
       if (session) {
         const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).single();
         if (prof) tenantId = prof.tenant_id;
@@ -329,79 +329,87 @@ export default function Dashboard() {
 
       if (!studentForm.fullName) throw new Error("O Nome Completo é obrigatório.");
 
-      // Generates a local UUID for the profile (assuming foreign key to auth.users is dropped or pending drop)
-      const newProfileId = crypto.randomUUID();
-
-      const profilePayload = {
-        id: newProfileId,
-        tenant_id: tenantId,
-        full_name: studentForm.fullName,
-        email: studentForm.email,
-        phone: studentForm.phone,
-        role: 'STUDENT'
-      };
-
       let selectedPlanName = '';
       if (studentForm.planId) {
          const foundPlan = plans.find(p => p.id === studentForm.planId);
          if (foundPlan) selectedPlanName = foundPlan.name;
       }
 
+      const isUpdate = !!studentForm.id;
+      const targetProfileId = isUpdate ? studentForm.id : crypto.randomUUID();
+
+      const profilePayload = {
+        full_name: studentForm.fullName,
+        email: studentForm.email,
+        phone: studentForm.phone,
+      };
+
+      const detailsPayload = {
+        status: studentForm.status,
+        goals: studentForm.goals,
+        injuries: studentForm.healthRestrictions,
+        notes: studentForm.anamnesisNote,
+        cpf: studentForm.cpf,
+        birth_date: studentForm.birthDate ? studentForm.birthDate : null,
+        gender: studentForm.gender,
+        address_line: studentForm.address,
+        city: studentForm.city,
+        state: studentForm.state,
+        cep: studentForm.cep,
+        company: studentForm.company,
+        profession: studentForm.profession,
+        emergency_contact_name: studentForm.emergencyContactName,
+        emergency_contact_phone: studentForm.emergencyContactPhone,
+        emergency_contact_relation: studentForm.emergencyContactRelation,
+        monthly_fee: studentForm.monthlyFee ? parseFloat(studentForm.monthlyFee.replace(',', '.')) : null,
+        due_day: studentForm.dueDay ? parseInt(studentForm.dueDay) : null,
+        plan_name_cache: selectedPlanName || 'Sem plano'
+      };
+
       if (session) {
-        const { error: profileErr } = await supabase.from('profiles').insert(profilePayload);
-        if (profileErr) throw profileErr;
+        if (isUpdate) {
+           const { error: pErr } = await supabase.from('profiles').update(profilePayload).eq('id', targetProfileId);
+           if (pErr) throw pErr;
+           const { error: dErr } = await supabase.from('student_details').update(detailsPayload).eq('profile_id', targetProfileId);
+           if (dErr) throw dErr;
+        } else {
+           const { error: pErr } = await supabase.from('profiles').insert({ ...profilePayload, id: targetProfileId, tenant_id: tenantId, role: 'STUDENT' });
+           if (pErr) throw pErr;
+           const { error: dErr } = await supabase.from('student_details').insert({ ...detailsPayload, profile_id: targetProfileId });
+           if (dErr) throw dErr;
 
-        const detailsPayload = {
-          profile_id: newProfileId,
-          status: studentForm.status,
-          goals: studentForm.goals,
-          injuries: studentForm.healthRestrictions,
-          notes: studentForm.anamnesisNote,
-          cpf: studentForm.cpf,
-          birth_date: studentForm.birthDate ? studentForm.birthDate : null,
-          gender: studentForm.gender,
-          address_line: studentForm.address,
-          city: studentForm.city,
-          state: studentForm.state,
-          cep: studentForm.cep,
-          company: studentForm.company,
-          profession: studentForm.profession,
-          emergency_contact_name: studentForm.emergencyContactName,
-          emergency_contact_phone: studentForm.emergencyContactPhone,
-          emergency_contact_relation: studentForm.emergencyContactRelation,
-          monthly_fee: studentForm.monthlyFee ? parseFloat(studentForm.monthlyFee.replace(',', '.')) : null,
-          due_day: studentForm.dueDay ? parseInt(studentForm.dueDay) : null,
-          plan_name_cache: selectedPlanName || 'Sem plano'
-        };
-
-        await supabase.from('student_details').insert(detailsPayload);
-
-        if (studentForm.planId) {
-          await supabase.from('subscriptions').insert({
-            tenant_id: tenantId,
-            student_id: newProfileId,
-            plan_id: studentForm.planId,
-            status: 'ACTIVE',
-            current_period_end: studentForm.nextDueDate || new Date().toISOString()
-          });
+           if (studentForm.planId) {
+             await supabase.from('subscriptions').insert({
+               tenant_id: tenantId,
+               student_id: targetProfileId,
+               plan_id: studentForm.planId,
+               status: 'ACTIVE',
+               current_period_end: studentForm.nextDueDate || new Date().toISOString()
+             });
+           }
         }
       }
 
-      alert('Aluno cadastrado com sucesso!');
+      alert(isUpdate ? '✅ Aluno atualizado com sucesso!' : '✅ Aluno cadastrado com sucesso!');
       
       if (session) {
         fetchDashboardData(); 
       } else {
-        // Fallback UI update para modo Teste/Sem Auth
-        setStudents(prev => [{
-          id: newProfileId, full_name: studentForm.fullName, email: studentForm.email, phone: studentForm.phone, created_at: new Date().toISOString(),
-          student_details: [{ status: studentForm.status, plan_name_cache: selectedPlanName || 'Sem plano fixo' }]
-        }, ...prev]);
+        setStudents(prev => {
+           if (isUpdate) {
+              return prev.map(s => s.id === targetProfileId ? { ...s, full_name: studentForm.fullName, email: studentForm.email, phone: studentForm.phone, student_details: [{ status: studentForm.status, plan_name_cache: selectedPlanName || 'Sem plano fixo' }] } : s);
+           } else {
+              return [{
+                id: targetProfileId, full_name: studentForm.fullName, email: studentForm.email, phone: studentForm.phone, created_at: new Date().toISOString(),
+                student_details: [{ status: studentForm.status, plan_name_cache: selectedPlanName || 'Sem plano fixo' }]
+              }, ...prev];
+           }
+        });
       }
       
       setShowStudentModal(false);
       setStudentForm({
-        fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
+        id: '', fullName: '', email: '', phone: '', birthDate: '', cpf: '', gender: '',
         address: '', city: '', state: '', cep: '', company: '', profession: '',
         planId: '', paymentMethod: 'PIX', billingFreq: 'MONTHLY', amount: '',
         startDate: '', nextDueDate: '',
@@ -411,6 +419,45 @@ export default function Dashboard() {
       });
     } catch(err: any) {
       alert("Erro ao salvar aluno: " + err.message);
+    }
+  };
+
+  const handleEditStudent = (stu: any) => {
+    setStudentForm({
+      id: stu.id,
+      fullName: stu.full_name || '', email: stu.email || '', phone: stu.phone || '',
+      birthDate: stu.student_details?.[0]?.birth_date || '', cpf: stu.student_details?.[0]?.cpf || '',
+      gender: stu.student_details?.[0]?.gender || '', address: stu.student_details?.[0]?.address_line || '',
+      city: stu.student_details?.[0]?.city || '', state: stu.student_details?.[0]?.state || '',
+      cep: stu.student_details?.[0]?.cep || '', company: stu.student_details?.[0]?.company || '',
+      profession: stu.student_details?.[0]?.profession || '', planId: '',
+      paymentMethod: 'PIX', billingFreq: 'MONTHLY', amount: '', startDate: '', nextDueDate: '',
+      goals: stu.student_details?.[0]?.goals || '', healthRestrictions: stu.student_details?.[0]?.injuries || '',
+      anamnesisNote: stu.student_details?.[0]?.notes || '',
+      status: stu.student_details?.[0]?.status || 'Ativo',
+      emergencyContactName: stu.student_details?.[0]?.emergency_contact_name || '',
+      emergencyContactPhone: stu.student_details?.[0]?.emergency_contact_phone || '',
+      emergencyContactRelation: stu.student_details?.[0]?.emergency_contact_relation || '',
+      monthlyFee: stu.student_details?.[0]?.monthly_fee?.toString() || '',
+      dueDay: stu.student_details?.[0]?.due_day?.toString() || '5'
+    });
+    setShowStudentModal(true);
+  };
+
+  const handleDeleteStudent = async (stuId: string, stuName: string) => {
+    if (!window.confirm(`Tem certeza que deseja excluir o aluno ${stuName}?`)) return;
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        // FK in DB takes care of cascaded deletion, but let's delete explicitly if needed.
+        const { error } = await supabase.from('profiles').delete().eq('id', stuId);
+        if (error) throw error;
+      }
+      setStudents(prev => prev.filter(s => s.id !== stuId));
+      alert('🗑️ Aluno excluído com sucesso!');
+    } catch (e: any) {
+      alert("Erro ao excluir aluno: " + e.message);
     }
   };
 
@@ -961,16 +1008,21 @@ export default function Dashboard() {
                     const isActive = stu.student_details?.[0]?.status === 'Ativo';
                     const planName = stu.student_details?.[0]?.plan_name_cache || 'Sem plano';
                     return (
-                    <tr key={stu.id} onClick={() => router.push(`/dashboard/clientes/${stu.id}`)} style={{ cursor: 'pointer', transition: 'background 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                    <tr key={stu.id} style={{ transition: 'background 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <div className={styles.clientAvatar} style={{ width: 36, height: 36, fontSize: '0.95rem' }}>
                             {(stu.full_name || 'A')[0].toUpperCase()}
                           </div>
                           <div>
-                            <strong style={{ color: '#fff', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                              {stu.full_name}
-                              <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', background: isActive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: isActive ? '#4ade80' : '#ef4444' }}>
+                            <strong 
+                               onClick={() => router.push(`/dashboard/clientes/${stu.id}`)} 
+                               style={{ color: '#fff', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px', cursor: 'pointer', transition: '0.2s' }}
+                               onMouseEnter={(e) => e.currentTarget.style.color = '#ccff00'}
+                               onMouseLeave={(e) => e.currentTarget.style.color = '#fff'}
+                            >
+                              <span style={{ textDecoration: 'underline' }}>{stu.full_name}</span>
+                              <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', background: isActive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: isActive ? '#4ade80' : '#ef4444', textDecoration: 'none' }}>
                                 {isActive ? 'ATIVO' : 'INATIVO'}
                               </span>
                             </strong>
@@ -990,7 +1042,10 @@ export default function Dashboard() {
                       </td>
                       <td style={{ textAlign: 'center', color: '#fff', fontSize: '0.9rem' }}>Hoje</td>
                       <td style={{ textAlign: 'center' }}>
-                        <button className={styles.btnSecondary} style={{ fontSize: '0.75rem', padding: '6px 12px' }}>Abrir Ficha</button>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          <button onClick={() => handleEditStudent(stu)} className={styles.iconBtn} title="Editar Aluno" style={{ padding: '6px', fontSize: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>✏️</button>
+                          <button onClick={() => handleDeleteStudent(stu.id, stu.full_name)} className={styles.iconBtn} title="Excluir Aluno" style={{ padding: '6px', fontSize: '1rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: '6px' }}>🗑️</button>
+                        </div>
                       </td>
                     </tr>
                     );
