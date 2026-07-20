@@ -32,6 +32,15 @@ export default function Login() {
     });
 
     if (error) {
+      let friendlyError = error.message;
+      if (friendlyError.includes('Invalid API key')) {
+        friendlyError = 'Erro de configuração: Chave da API (Supabase) inválida ou ausente.';
+      } else if (friendlyError.includes('Invalid login credentials')) {
+        friendlyError = 'E-mail ou senha incorretos.';
+      } else if (friendlyError.includes('To protect the security')) {
+        friendlyError = 'Muitas tentativas de login. Por favor aguarde alguns instantes.';
+      }
+
       if (error.message.includes('Invalid login credentials')) {
         // Auto-cria a conta se não existir no banco, conforme pedido do usuário
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
@@ -46,7 +55,7 @@ export default function Login() {
           window.location.href = '/dashboard';
         }
       } else {
-        setErrorMsg(error.message);
+        setErrorMsg(friendlyError);
         setLoading(false);
       }
     } else {
